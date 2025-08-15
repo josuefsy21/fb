@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3355;
 // Conexão Postgres
 const pool = new Pool({
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT || 5432,
+    port: process.env.DB_PORT,
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_BASE
@@ -101,7 +101,7 @@ app.get('/api/historico/:id', async (req, res) => {
 
 // Página de termos
 app.get('/termos', (req, res) => res.render('termos'));
-
+app.get('/politicas', (req, res) => res.render('politicas'));
 // Iniciar servidor
 app.listen(PORT, () => {
     console.log(`--SERVER ON RUNNING IN PORT ${PORT}--`);
