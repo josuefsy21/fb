@@ -1,55 +1,56 @@
 require('dotenv').config();
-const mysql = require("mysql2/promise");
+const { Pool } = require('pg');
 const fetch = require("node-fetch");
 const cron = require("node-cron");
 
 const TOKEN = process.env.TOKEN_FACEBOOK;
 const API_URL = process.env.API_URL;
 
-async function getDB() {
-    return mysql.createConnection({
-        host: process.env.DB_HOST,
-        user: process.env.DB_USER,
-        password: process.env.DB_PASS,
-        database: process.env.DB_BASE
-    });
-}
+// Criar pool de conexão com Postgres
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false } // Necessário no Render
+});
 
 async function coletarStatus() {
-    const conn = await getDB();
+    const client = await pool.connect();
 
-    // Buscar anúncios salvos
-    const [anuncios] = await conn.execute("SELECT id FROM anuncios");
+    try {
+        // Buscar anúncios salvos
+        const { rows: anuncios } = await client.query("SELECT id FROM anuncios");
 
-    for (const anuncio of anuncios) {
-        try {
-            // Consultar na API
-            const url = `${API_URL}?access_token=${TOKEN}&ad_ids=${anuncio.id}&fields=id,ad_delivery_stop_time`;
-            const resp = await fetch(url);
-            const json = await resp.json();
+        for (const anuncio of anuncios) {
+            try {
+                // Consultar na API
+                const url = `${API_URL}?access_token=${TOKEN}&ad_ids=${anuncio.id}&fields=id,ad_delivery_stop_time`;
+                const resp = await fetch(url);
+                const json = await resp.json();
 
-            let ativo = 0;
-            if (json.data && json.data.length > 0) {
-                const anuncioData = json.data[0];
-                ativo = anuncioData.ad_delivery_stop_time ? 0 : 1;
+                let ativo = 0;
+                if (json.data && json.data.length > 0) {
+                    const anuncioData = json.data[0];
+                    ativo = anuncioData.ad_delivery_stop_time ? 0 : 1;
+                }
+
+                // Atualizar tabela de anúncios
+                await client.query("UPDATE anuncios SET ativo = $1 WHERE id = $2", [ativo, anuncio.id]);
+
+                // Inserir histórico
+                await client.query(
+                    "INSERT INTO historico (anuncio_id, data, ativos) VALUES ($1, CURRENT_DATE, $2)",
+                    [anuncio.id, ativo]
+                );
+
+                console.log(`Anúncio ${anuncio.id} → ativo: ${ativo}`);
+            } catch (err) {
+                console.error(`Erro no anúncio ${anuncio.id}:`, err);
             }
-
-            // Atualizar tabela de anúncios
-            await conn.execute("UPDATE anuncios SET ativo = ? WHERE id = ?", [ativo, anuncio.id]);
-
-            // Inserir histórico
-            await conn.execute(
-                "INSERT INTO historico (anuncio_id, data, ativos) VALUES (?, CURDATE(), ?)",
-                [anuncio.id, ativo]
-            );
-
-            console.log(`Anúncio ${anuncio.id} → ativo: ${ativo}`);
-        } catch (err) {
-            console.error(`Erro no anúncio ${anuncio.id}:`, err);
         }
+    } catch (err) {
+        console.error("Erro na coleta:", err);
+    } finally {
+        client.release();
     }
-
-    await conn.end();
 }
 
 // Executa todo dia às 2 da manhã
@@ -58,5 +59,5 @@ cron.schedule("0 2 * * *", () => {
     coletarStatus();
 });
 
-// Se quiser rodar manualmente para teste:
+// Para rodar manualmente no teste:
 // coletarStatus();
