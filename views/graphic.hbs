@@ -1,0 +1,37 @@
+<h1>Gráfico de Anúncio</h1>
+<form>
+    <select id="selectAnuncio">
+        {{#each anuncios}}
+        <option value="{{id}}">{{id}} - {{titulo}}</option>
+        {{/each}}
+    </select>
+</form>
+<canvas id="grafico"></canvas>
+
+<script>
+    document.getElementById("selectAnuncio").addEventListener("change", function () {
+        fetch(`/api/historico/${this.value}`)
+            .then(res => res.json())
+            .then(dados => {
+                const ctx = document.getElementById("grafico");
+                const labels = dados.map(d => d.data);
+                const valores = dados.map(d => d.ativos);
+
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels,
+                        datasets: [{
+                            label: 'Ativo (1) / Inativo (0)',
+                            data: valores,
+                            borderColor: 'blue',
+                            fill: false
+                        }]
+                    }
+                });
+            });
+    });
+
+    // Dispara para o primeiro anúncio
+    document.getElementById("selectAnuncio").dispatchEvent(new Event("change"));
+</script>
