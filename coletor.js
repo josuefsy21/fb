@@ -1,3 +1,4 @@
+require('dotenv').config();
 const mysql = require("mysql2/promise");
 const fetch = require("node-fetch");
 const cron = require("node-cron");
@@ -7,10 +8,10 @@ const API_URL = process.env.API_URL;
 
 async function getDB() {
     return mysql.createConnection({
-        host: "localhost",
-        user: "root",
-        password: "",
-        database: "facebook_ads"
+        host: process.env.DB_HOST,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASS,
+        database: process.env.DB_BASE
     });
 }
 

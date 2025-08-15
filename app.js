@@ -1,61 +1,33 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-
-const PORT = process.env.PORT || 3355;
-const app = express();
-
 const { engine } = require('express-handlebars');
 const fetch = require('node-fetch');
-const mysql = ('mysql2/promise');
+const { Pool } = require('pg');
 const path = require('path');
 
+const app = express();
+const PORT = process.env.PORT || 3355;
+
+// Conexão Postgres
+const pool = new Pool({
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT || 5432,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_BASE
+});
+
+// Middlewares
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(cors());
+app.use(express.static(path.join(__dirname, 'public')));
 app.engine('hbs', engine({ extname: '.hbs' }));
 app.set('view engine', 'hbs');
 app.set('views', path.join(__dirname, 'views'));
 
-app.use(express.static(path.join(__dirname, 'public')));
-
-async function getDB() {
-    return mysql.createConnection({
-        host: 'localhost',
-        user: 'root',
-        password: '',
-        database: 'facebook_ads'
-    });
-}
-
-// Salvar anúncio no DB
-app.post('/salvar', async (req, res) => {
-    const { id, titulo } = req.body;
-    const conn = await getDB();
-    await conn.execute('INSERT IGNORE INTO anuncios (id, titulo) VALUES (?, ?)', [id, titulo]);
-    await conn.end();
-    res.redirect('/grafico');
-});
-
-// Página do gráfico
-app.get('/grafico', async (req, res) => {
-    const conn = await getDB();
-    const [anuncios] = await conn.execute('SELECT * FROM anuncios');
-    await conn.end();
-    res.render('grafico', { title: 'Gráfico', anuncios });
-});
-
-// API para histórico
-app.get('/api/historico/:id', async (req, res) => {
-    const conn = await getDB();
-    const [dados] = await conn.execute(
-        'SELECT data, ativos FROM historico WHERE anuncio_id = ? ORDER BY data ASC',
-        [req.params.id]
-    );
-    await conn.end();
-    res.json(dados);
-});
-
-
+// Página inicial / pesquisa
 app.get('/', async (req, res) => {
     const termo = req.query.termo || '';
     let anuncios = [];
@@ -67,14 +39,70 @@ app.get('/', async (req, res) => {
         const url = `${API_URL}?access_token=${TOKEN}&search_terms=${encodeURIComponent(termo)}&ad_reached_countries=['${pais}']&fields=id,ad_creative_body,ad_snapshot_url,ad_delivery_stop_time&limit=10`;
         const response = await fetch(url);
         const json = await response.json();
-        console.log('Resposta da API:', json); // para debug
+        console.log('Resposta da API:', json); // debug
         anuncios = json.data || [];
     }
 
     res.render('index', { title: 'Pesquisar', termo, anuncios });
 });
 
+// Salvar anúncio no DB
+app.post('/salvar', async (req, res) => {
+    const { id, titulo, ad_snapshot_url, ad_delivery_stop_time } = req.body;
+    try {
+        // Salvar anúncio
+        await pool.query(
+            'INSERT INTO anuncios (id, titulo, ad_snapshot_url, ad_delivery_stop_time) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
+            [id, titulo, ad_snapshot_url, ad_delivery_stop_time]
+        );
 
+        // Registrar histórico diário (hoje)
+        const hoje = new Date().toISOString().split('T')[0];
+        await pool.query(
+            'INSERT INTO anuncios_monitoramento (anuncio_id, data_registro, status_ativo) VALUES ($1, $2, $3)',
+            [id, hoje, true]
+        );
+
+        res.redirect('/grafico');
+    } catch (err) {
+        console.error(err);
+        res.send('Erro ao salvar anúncio');
+    }
+});
+
+// Página do gráfico
+app.get('/grafico', async (req, res) => {
+    try {
+        const { rows: anuncios } = await pool.query('SELECT * FROM anuncios');
+        res.render('grafico', { title: 'Gráfico', anuncios });
+    } catch (err) {
+        console.error(err);
+        res.send('Erro ao carregar gráfico');
+    }
+});
+
+// API histórico de um anúncio
+app.get('/api/historico/:id', async (req, res) => {
+    try {
+        const { rows: dados } = await pool.query(
+            `SELECT data_registro AS data, COUNT(*) AS ativos
+             FROM anuncios_monitoramento
+             WHERE status_ativo = true AND anuncio_id = $1
+             GROUP BY data_registro
+             ORDER BY data_registro ASC`,
+            [req.params.id]
+        );
+        res.json(dados);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ erro: 'Erro ao buscar histórico' });
+    }
+});
+
+// Página de termos
+app.get('/termos', (req, res) => res.render('termos'));
+
+// Iniciar servidor
 app.listen(PORT, () => {
-    console.log(`--SERVER ON RUNNING IN PORT@${PORT}--`);
+    console.log(`--SERVER ON RUNNING IN PORT ${PORT}--`);
 });
